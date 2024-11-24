@@ -3,7 +3,7 @@ from tkinter import ttk
 from styles import Colors, Spacing, Typography
 from pathlib import Path
 import json
-from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageChops
 from typing import List, Optional
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -460,17 +460,15 @@ class ModernApp(TkinterDnD.Tk):
             loading.destroy()
     
     def _create_dense_collage(self, image_paths, width, height):
-        """Crée un collage dense sans espaces blancs"""
-        # Afficher le message de chargement
+        """Crée un collage dense avec préservation parfaite des ratios et sans espaces blancs"""
         loading = self.show_loading_message("Création du collage dense...")
         try:
-            import random
-            
-            # Créer l'image de fond
             bg_color = self.background_color.get() if hasattr(self, 'background_color') else '#FFFFFF'
-            collage = Image.new('RGB', (width, height), bg_color)
+            # Créer une image plus grande pour avoir de la marge
+            temp_width = int(width * 1.2)
+            collage = Image.new('RGB', (temp_width, height), bg_color)
             
-            # Charger et préparer les images
+            # Charger les images avec leurs ratios originaux
             images = []
             for path in image_paths:
                 try:
@@ -484,57 +482,99 @@ class ModernApp(TkinterDnD.Tk):
             
             if not images:
                 return collage
+
+            def compute_layout(photos, target_width):
+                """Calcule la disposition optimale pour une ligne"""
+                total_ratio = sum(r for _, r in photos)
+                if total_ratio == 0:
+                    return 0
+                return int(target_width / total_ratio)
+
+            def find_best_breakpoint(photos, target_width, min_height, max_height):
+                """Trouve le meilleur point de coupure pour une ligne"""
+                for i in range(1, len(photos) + 1):
+                    row = photos[:i]
+                    height = compute_layout(row, target_width)
+                    if min_height <= height <= max_height:
+                        return i
+                return len(photos)
+
+            # Paramètres de disposition
+            min_height = int(height * 0.5 / math.sqrt(len(images)))
+            max_height = int(height * 2.0 / math.sqrt(len(images)))
             
-            # Calculer le nombre optimal de colonnes
-            n_images = len(images)
-            target_cols = math.ceil(math.sqrt(n_images * width / height))
+            # Créer les lignes
+            rows = []
+            remaining = images[:]
             
-            # Trier les images par ratio pour une meilleure distribution
-            images.sort(key=lambda x: x[1])
-            
-            # Calculer la largeur de base des colonnes
-            col_width = width / target_cols
-            
-            # Organiser les images en colonnes
-            columns = [[] for _ in range(target_cols)]
-            col_heights = [0] * target_cols
-            
-            # Distribuer les images dans les colonnes
-            for img, ratio in images:
-                # Trouver la colonne la plus courte
-                shortest_col = min(range(target_cols), key=lambda i: col_heights[i])
-                
-                # Calculer la taille de l'image dans cette colonne
-                img_width = col_width
-                img_height = img_width / ratio
-                
-                # Ajouter l'image à la colonne
-                columns[shortest_col].append((img, img_width, img_height))
-                col_heights[shortest_col] += img_height
-            
-            # Ajuster les hauteurs pour remplir la hauteur totale
-            max_height = max(col_heights)
-            scale_factors = [height / h if h > 0 else 1 for h in col_heights]
-            
+            while remaining:
+                breakpoint = find_best_breakpoint(remaining, temp_width, min_height, max_height)
+                row = remaining[:breakpoint]
+                rows.append(row)
+                remaining = remaining[breakpoint:]
+
+            # Calculer les hauteurs initiales
+            row_heights = []
+            for row in rows:
+                row_height = compute_layout(row, temp_width)
+                row_heights.append(row_height)
+
+            # Ajuster les hauteurs pour remplir exactement la hauteur disponible
+            total_height = sum(row_heights)
+            if total_height > 0:
+                scale_factor = height / total_height
+            else:
+                scale_factor = 1
+
             # Placer les images
-            x_offset = 0
-            for col_idx, (column, scale) in enumerate(zip(columns, scale_factors)):
-                y_offset = 0
-                col_width = width / target_cols
+            y = 0
+            for row, row_height in zip(rows, row_heights):
+                # Calculer la hauteur finale de la ligne
+                final_height = int(row_height * scale_factor)
                 
-                for img, w, h in column:
-                    # Calculer les dimensions finales
-                    final_width = int(w)
-                    final_height = int(h * scale)
+                # Calculer la largeur totale des ratios
+                total_ratio = sum(ratio for _, ratio in row)
+                
+                # Placer les images dans la ligne
+                x = 0
+                for img, ratio in row:
+                    # Calculer la largeur en préservant strictement le ratio
+                    img_width = max(1, int(final_height * ratio))
+                    img_height = max(1, final_height)
                     
                     # Redimensionner l'image
-                    img_resized = img.resize((final_width, final_height), Image.Resampling.LANCZOS)
+                    img_resized = img.resize((img_width, img_height), Image.Resampling.LANCZOS)
                     
                     # Coller l'image
-                    collage.paste(img_resized, (int(x_offset), int(y_offset)))
-                    y_offset += final_height
+                    collage.paste(img_resized, (x, y))
+                    x += img_width
                 
-                x_offset += col_width
+                y += final_height
+
+            # Trouver les limites réelles du contenu
+            def find_content_bounds(img):
+                bg = Image.new('RGB', img.size, bg_color)
+                diff = ImageChops.difference(img, bg)
+                bbox = diff.getbbox()
+                return bbox if bbox else (0, 0, img.width, img.height)
+
+            # Recadrer aux dimensions du contenu
+            content_bbox = find_content_bounds(collage)
+            if content_bbox:
+                collage_cropped = collage.crop(content_bbox)
+                
+                # Redimensionner pour correspondre aux dimensions demandées
+                content_ratio = collage_cropped.width / collage_cropped.height
+                target_ratio = width / height
+                
+                if content_ratio > target_ratio:
+                    new_height = int(width / content_ratio)
+                    final_collage = collage_cropped.resize((width, new_height), Image.Resampling.LANCZOS)
+                else:
+                    new_width = int(height * content_ratio)
+                    final_collage = collage_cropped.resize((new_width, height), Image.Resampling.LANCZOS)
+                
+                return final_collage
             
             return collage
         finally:
