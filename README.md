@@ -12,7 +12,8 @@ WebCollage est une application de bureau moderne et conviviale pour créer des c
 
 Exemple :
 
-![image](https://github.com/user-attachments/assets/b53533e5-6377-4745-9433-e160fe08b679)
+![Collage](https://github.com/user-attachments/assets/244f5b68-1914-443b-b77d-1a93a991c8a7)
+
 
 Exemple avec affichage de thème :
 
