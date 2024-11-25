@@ -1,4 +1,4 @@
-# WebCollage  : BETA VERSION
+# WebCollage
 
 WebCollage is a modern, user-friendly desktop application for creating image collages. Built with Python and Tkinter, it offers an intuitive drag-and-drop interface and advanced collage generation features.
 

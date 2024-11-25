@@ -17,7 +17,7 @@ import os
 import platform
 import subprocess
 import random
-import numpy as np
+import numpy as np # type: ignore
 
 class ModernApp(TkinterDnD.Tk):
     def __init__(self):
@@ -36,7 +36,7 @@ class ModernApp(TkinterDnD.Tk):
         self.current_view = "grid"  # ou "preview"
         
         # Définir la couleur de fond par défaut
-        self.background_color = tk.StringVar(value=Colors.SYSTEM_BLACK)
+        self.background_color = tk.StringVar(value='#333333')
     
     def setup_window(self):
         # Configurer la fenêtre en mode light par défaut
@@ -229,7 +229,7 @@ class ModernApp(TkinterDnD.Tk):
                     fg=Colors.TEXT).pack(side='left', padx=Spacing.M)
             
             # Variable pour stocker la couleur de fond
-            self.background_color = tk.StringVar(value='#FFFFFF')
+            self.background_color = tk.StringVar(value='#333333')
             
             # Bouton de couleur avec aperçu
             color_preview = tk.Frame(color_frame, width=30, height=30, 
@@ -301,8 +301,7 @@ class ModernApp(TkinterDnD.Tk):
             loading.destroy()
     
     def create_preview(self, window):
-        """Crée la prévisualisation du collage"""
-        # Afficher le message de chargement
+        """Crée la prévisualisation du collage identique au résultat final"""
         loading = self.show_loading_message("Génération de la prévisualisation...")
         try:
             preview_frame = tk.Frame(window, bg=Colors.SURFACE)
@@ -310,45 +309,56 @@ class ModernApp(TkinterDnD.Tk):
             
             if self.grid_view.images:
                 try:
-                    # Vérifier que toutes les images sont valides
-                    valid_images = []
-                    for path in self.grid_view.images:
-                        try:
-                            with Image.open(path) as img:
-                                if img.mode != 'RGB':
-                                    img = img.convert('RGB')
-                                valid_images.append(path)
-                        except Exception as e:
-                            print(f"Erreur lors du chargement de {path}: {e}")
+                    # Obtenir les dimensions de la zone de prévisualisation
+                    window.update_idletasks()
+                    preview_width = preview_frame.winfo_width()
+                    preview_height = preview_frame.winfo_height()
                     
-                    if not valid_images:
-                        raise Exception("Aucune image valide trouvée")
+                    if preview_width <= 0:
+                        preview_width = 800
+                    if preview_height <= 0:
+                        preview_height = 600
                     
-                    # Créer le collage avec les images valides
-                    collage = self.create_collage_image(valid_images, 2000, 2000)
+                    # Créer le collage exactement comme pour le résultat final
+                    collage = self.create_collage_image(self.grid_view.images, preview_width, preview_height)
                     
                     if collage is None:
                         raise Exception("Erreur lors de la création du collage")
                     
-                    # Redimensionner pour la prévisualisation
-                    preview_size = (800, 800)
-                    aspect_ratio = collage.width / collage.height
-                    if aspect_ratio > 1:
-                        preview_size = (800, int(800 / aspect_ratio))
+                    # Appliquer le même post-traitement que pour le résultat final
+                    bg_color = self.background_color.get()
+                    collage = self.post_process_collage(collage, preview_width, preview_height, bg_color)
+                    
+                    # Calculer les dimensions pour l'affichage
+                    collage_ratio = collage.width / collage.height
+                    frame_ratio = preview_width / preview_height
+                    
+                    if collage_ratio > frame_ratio:
+                        new_width = preview_width
+                        new_height = int(preview_width / collage_ratio)
                     else:
-                        preview_size = (int(800 * aspect_ratio), 800)
+                        new_height = preview_height
+                        new_width = int(preview_height * collage_ratio)
                     
-                    preview_collage = collage.copy()
-                    preview_collage.thumbnail(preview_size, Image.Resampling.LANCZOS)
+                    # Redimensionner pour l'affichage
+                    preview_collage = collage.resize((new_width, new_height), Image.Resampling.LANCZOS)
                     
-                    # Afficher la prévisualisation
+                    # Créer le canvas et afficher
+                    canvas = tk.Canvas(preview_frame, 
+                                     width=preview_width,
+                                     height=preview_height,
+                                     bg=bg_color,
+                                     highlightthickness=0)
+                    canvas.pack(fill='both', expand=True)
+                    
+                    # Créer l'image Tkinter
                     photo = ImageTk.PhotoImage(preview_collage)
-                    label = tk.Label(preview_frame, image=photo, bg=Colors.SURFACE)
-                    label.image = photo
-                    label.pack(expand=True)
                     
-                    # Stocker le collage original pour la sauvegarde
-                    self.current_collage = collage
+                    # Centrer l'image
+                    x = (preview_width - new_width) // 2
+                    y = (preview_height - new_height) // 2
+                    canvas.create_image(x, y, image=photo, anchor='nw')
+                    canvas.image = photo
                     
                 except Exception as e:
                     error_label = tk.Label(preview_frame,
