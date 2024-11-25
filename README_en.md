@@ -1,6 +1,6 @@
 # WebCollage
 
-(Version Française : https://github.com/Isulion/IsuCollage/blob/main/README.md)
+(Version Française : <https://github.com/Isulion/IsuCollage/blob/main/README.md>)
 
 WebCollage is a modern, user-friendly desktop application for creating image collages. Built with Python and Tkinter, it offers an intuitive drag-and-drop interface and advanced collage generation features.
 
