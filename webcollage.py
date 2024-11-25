@@ -3,7 +3,7 @@ from tkinter import ttk
 from styles import Colors, Spacing, Typography
 from pathlib import Path
 import json
-from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageChops # type: ignore
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageChops, ImageColor # type: ignore
 from typing import List, Optional
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD # type: ignore
@@ -16,6 +16,8 @@ import math
 import os
 import platform
 import subprocess
+import random
+import numpy as np
 
 class ModernApp(TkinterDnD.Tk):
     def __init__(self):
@@ -242,9 +244,13 @@ class ModernApp(TkinterDnD.Tk):
                 )
                 if color[1]:  # color est (RGB, hex)
                     self.background_color.set(color[1])
-                    color_preview.configure(bg=color[1])
-                    # Mettre à jour la prévisualisation
-                    self.create_preview(preview_window)
+                    try:
+                        color_preview.configure(bg=color[1])
+                        # Mettre à jour la prévisualisation
+                        self.create_preview(preview_window)
+                    except tk.TclError:
+                        # Gérer l'erreur si le widget n'existe plus
+                        pass
             
             color_button = tk.Button(color_frame,
                                   text="Choisir",
@@ -460,125 +466,168 @@ class ModernApp(TkinterDnD.Tk):
             loading.destroy()
     
     def _create_dense_collage(self, image_paths, width, height):
-        """Crée un collage dense avec préservation parfaite des ratios et sans espaces blancs"""
+        """Crée un collage dense avec dimensions optimisées"""
         loading = self.show_loading_message("Création du collage dense...")
         try:
             bg_color = self.background_color.get() if hasattr(self, 'background_color') else '#FFFFFF'
-            # Créer une image plus grande pour avoir de la marge
-            temp_width = int(width * 1.2)
-            collage = Image.new('RGB', (temp_width, height), bg_color)
             
-            # Charger les images avec leurs ratios originaux
+            # Charger les images
             images = []
+            total_area = width * height
             for path in image_paths:
                 try:
                     with Image.open(path) as img:
                         if img.mode != 'RGB':
                             img = img.convert('RGB')
                         ratio = img.width / img.height
-                        images.append((img.copy(), ratio))
+                        images.append((img.copy(), ratio, path))
                 except Exception as e:
                     print(f"Erreur lors du chargement de {path}: {e}")
             
             if not images:
-                return collage
+                return Image.new('RGB', (width, height), bg_color)
 
-            def compute_layout(photos, target_width):
-                """Calcule la disposition optimale pour une ligne"""
-                total_ratio = sum(r for _, r in photos)
-                if total_ratio == 0:
-                    return 0
-                return int(target_width / total_ratio)
-
-            def find_best_breakpoint(photos, target_width, min_height, max_height):
-                """Trouve le meilleur point de coupure pour une ligne"""
-                for i in range(1, len(photos) + 1):
-                    row = photos[:i]
-                    height = compute_layout(row, target_width)
-                    if min_height <= height <= max_height:
-                        return i
-                return len(photos)
-
-            # Paramètres de disposition
-            min_height = int(height * 0.5 / math.sqrt(len(images)))
-            max_height = int(height * 2.0 / math.sqrt(len(images)))
+            # Calculer le ratio global cible
+            target_ratio = width / height
             
-            # Créer les lignes
-            rows = []
-            remaining = images[:]
-            
-            while remaining:
-                breakpoint = find_best_breakpoint(remaining, temp_width, min_height, max_height)
-                row = remaining[:breakpoint]
-                rows.append(row)
-                remaining = remaining[breakpoint:]
+            def optimize_layout(imgs, w, h):
+                """Optimise la disposition des images pour un résultat plus carré"""
+                best_rows = []
+                min_waste = float('inf')
+                
+                # Calculer le nombre idéal de lignes pour un résultat carré
+                n_images = len(imgs)
+                ideal_rows = round(math.sqrt(n_images))  # Nombre de lignes pour un carré parfait
+                
+                # Essayer différentes configurations autour du nombre idéal de lignes
+                for n_rows in range(max(1, ideal_rows - 1), ideal_rows + 2):
+                    target_per_row = n_images / n_rows
+                    rows = []
+                    current_row = []
+                    row_width = 0
+                    row_height = h / n_rows
+                    
+                    for img, ratio, _ in imgs:
+                        img_width = row_height * ratio
+                        
+                        # Vérifier si on doit commencer une nouvelle ligne
+                        if len(current_row) >= math.ceil(target_per_row) or (row_width + img_width > w * 1.1 and current_row):
+                            rows.append(current_row)
+                            current_row = []
+                            row_width = 0
+                        
+                        current_row.append((img, ratio, _))
+                        row_width += img_width
+                    
+                    if current_row:
+                        rows.append(current_row)
+                    
+                    # Calculer le score de cette disposition
+                    waste = 0
+                    for row in rows:
+                        # Pénaliser les lignes trop courtes ou trop longues
+                        row_ratio = sum(r for _, r, _ in row)
+                        ideal_height = w / row_ratio
+                        waste += abs(ideal_height - row_height)
+                        
+                        # Pénaliser les lignes avec trop peu ou trop d'images
+                        waste += abs(len(row) - target_per_row) * 0.5
+                    
+                    # Favoriser les dispositions proches du carré
+                    aspect_ratio = w / (h / len(rows))
+                    waste += abs(aspect_ratio - 1.0) * w  # Pénaliser les ratios non carrés
+                    
+                    if waste < min_waste:
+                        min_waste = waste
+                        best_rows = rows
+                
+                return best_rows
 
-            # Calculer les hauteurs initiales
-            row_heights = []
+            # Trier les images par ratio similaire
+            images.sort(key=lambda x: x[1], reverse=True)
+            
+            # Trouver la meilleure disposition
+            rows = optimize_layout(images, width, height)
+            
+            # Calculer les dimensions réelles nécessaires
+            real_height = 0
+            max_width = 0
+            
             for row in rows:
-                row_height = compute_layout(row, temp_width)
-                row_heights.append(row_height)
-
-            # Ajuster les hauteurs pour remplir exactement la hauteur disponible
-            total_height = sum(row_heights)
-            if total_height > 0:
-                scale_factor = height / total_height
-            else:
-                scale_factor = 1
-
-            # Placer les images
+                row_ratio = sum(ratio for _, ratio, _ in row)
+                row_height = width / row_ratio
+                real_height += row_height
+                row_width = sum(ratio * row_height for _, ratio, _ in row)
+                max_width = max(max_width, row_width)
+            
+            # Ajuster les dimensions du canvas pour correspondre au contenu
+            scale = min(width / max_width, height / real_height)
+            final_width = int(max_width * scale)
+            final_height = int(real_height * scale)
+            
+            # Créer le collage avec les dimensions optimisées
+            collage = Image.new('RGB', (final_width, final_height), bg_color)
             y = 0
-            for row, row_height in zip(rows, row_heights):
-                # Calculer la hauteur finale de la ligne
-                final_height = int(row_height * scale_factor)
-                
-                # Calculer la largeur totale des ratios
-                total_ratio = sum(ratio for _, ratio in row)
-                
-                # Placer les images dans la ligne
+            
+            for row in rows:
+                row_ratio = sum(ratio for _, ratio, _ in row)
+                row_height = (width / row_ratio) * scale
                 x = 0
-                for img, ratio in row:
-                    # Calculer la largeur en préservant strictement le ratio
-                    img_width = max(1, int(final_height * ratio))
-                    img_height = max(1, final_height)
+                
+                for img, ratio, _ in row:
+                    img_width = int(row_height * ratio)
+                    img_height = int(row_height)
                     
-                    # Redimensionner l'image
                     img_resized = img.resize((img_width, img_height), Image.Resampling.LANCZOS)
-                    
-                    # Coller l'image
-                    collage.paste(img_resized, (x, y))
+                    collage.paste(img_resized, (x, int(y)))
                     x += img_width
                 
-                y += final_height
-
-            # Trouver les limites réelles du contenu
-            def find_content_bounds(img):
-                bg = Image.new('RGB', img.size, bg_color)
-                diff = ImageChops.difference(img, bg)
-                bbox = diff.getbbox()
-                return bbox if bbox else (0, 0, img.width, img.height)
-
-            # Recadrer aux dimensions du contenu
-            content_bbox = find_content_bounds(collage)
-            if content_bbox:
-                collage_cropped = collage.crop(content_bbox)
-                
-                # Redimensionner pour correspondre aux dimensions demandées
-                content_ratio = collage_cropped.width / collage_cropped.height
-                target_ratio = width / height
-                
-                if content_ratio > target_ratio:
-                    new_height = int(width / content_ratio)
-                    final_collage = collage_cropped.resize((width, new_height), Image.Resampling.LANCZOS)
-                else:
-                    new_width = int(height * content_ratio)
-                    final_collage = collage_cropped.resize((new_width, height), Image.Resampling.LANCZOS)
-                
-                return final_collage
+                y += row_height
             
             return collage
+            
         finally:
             loading.destroy()
+    
+    def post_process_collage(self, collage, width, height, bg_color):
+        """Post-traitement pour éliminer les espaces blancs en préservant strictement les ratios"""
+        try:
+            # Convertir l'image en tableau numpy
+            img_array = np.array(collage)
+            bg_color_array = np.array(ImageColor.getrgb(bg_color))
+            
+            # Calculer la différence pour chaque canal avec une tolérance
+            tolerance = 10  # Tolérance pour la détection du fond
+            diff_r = np.abs(img_array[:,:,0] - bg_color_array[0]) > tolerance
+            diff_g = np.abs(img_array[:,:,1] - bg_color_array[1]) > tolerance
+            diff_b = np.abs(img_array[:,:,2] - bg_color_array[2]) > tolerance
+            
+            # Combiner les différences
+            non_bg_mask = diff_r | diff_g | diff_b
+            
+            # Trouver les limites du contenu réel
+            rows = np.any(non_bg_mask, axis=1)
+            cols = np.any(non_bg_mask, axis=0)
+            
+            if not np.any(rows) or not np.any(cols):
+                return collage
+            
+            # Obtenir les indices des limites
+            rmin, rmax = np.where(rows)[0][[0, -1]]
+            cmin, cmax = np.where(cols)[0][[0, -1]]
+            
+            # Simple recadrage aux limites du contenu
+            cropped = collage.crop((cmin, rmin, cmax + 1, rmax + 1))
+            
+            # Créer l'image finale avec les dimensions du contenu recadré
+            final = Image.new('RGB', (cropped.width, cropped.height), bg_color)
+            final.paste(cropped, (0, 0))
+            
+            return final
+            
+        except Exception as e:
+            print(f"Erreur lors du post-traitement: {e}")
+            return collage
     
     def save_collage(self, window, width, height):
         """Sauvegarder le collage"""
@@ -594,11 +643,14 @@ class ModernApp(TkinterDnD.Tk):
         )
         
         if output_path:
-            # Afficher le message de chargement
             loading = self.show_loading_message("Sauvegarde du collage en cours...")
             try:
-                # Créer le collage final aux dimensions spécifiées
+                # Créer le collage initial
                 final_collage = self.create_collage_image(self.grid_view.images, width, height)
+                
+                # Post-traitement pour éliminer les espaces blancs
+                bg_color = self.background_color.get() if hasattr(self, 'background_color') else '#FFFFFF'
+                final_collage = self.post_process_collage(final_collage, width, height, bg_color)
                 
                 # Sauvegarder l'image
                 final_collage.save(output_path, quality=95, optimize=True)
@@ -1030,7 +1082,7 @@ class ActionSheet(tk.Frame):
         pass
     
     def create_collage(self):
-        # TODO: Implémenter la création du collage
+        # TODO: Implémenter la cration du collage
         pass
 
 if __name__ == "__main__":
