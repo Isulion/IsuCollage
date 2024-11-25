@@ -3,10 +3,10 @@ from tkinter import ttk
 from styles import Colors, Spacing, Typography
 from pathlib import Path
 import json
-from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageChops
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageChops # type: ignore
 from typing import List, Optional
 try:
-    from tkinterdnd2 import DND_FILES, TkinterDnD
+    from tkinterdnd2 import DND_FILES, TkinterDnD # type: ignore
 except ImportError:
     print("Pour activer le drag & drop, installez tkinterdnd2 avec:")
     print("pip install tkinterdnd2")
