@@ -13,3 +13,4 @@ WebCollage is a modern, user-friendly desktop application for creating image col
 ## Installation
 
 1. Clone this repository: 
+git clone https://github.com/Isulion/IsuCollage
