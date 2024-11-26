@@ -18,6 +18,7 @@ import platform
 import subprocess
 import random
 import numpy as np # type: ignore
+import emoji
 
 class ModernApp(TkinterDnD.Tk):
     def __init__(self):
@@ -375,10 +376,13 @@ class ModernApp(TkinterDnD.Tk):
         """Crée l'image du collage"""
         # Vérifier si on doit afficher les thèmes
         show_themes = hasattr(self, 'show_themes') and self.show_themes.get()
+        print(f"Show themes option is: {show_themes}")  # Debug print
         
         if show_themes:
+            print("Creating grid collage with themes")  # Debug print
             return self._create_grid_collage(image_paths, width, height)
         else:
+            print("Creating dense collage without themes")  # Debug print
             return self._create_dense_collage(image_paths, width, height)
     
     def _create_grid_collage(self, image_paths, width, height):
@@ -388,20 +392,35 @@ class ModernApp(TkinterDnD.Tk):
         try:
             # Calculer la disposition
             n_images = len(image_paths)
+            if n_images == 0:
+                return Image.new('RGB', (width, height), self.background_color.get())
+                
             cols = math.ceil(math.sqrt(n_images))
             rows = math.ceil(n_images / cols)
             
             # Calculer la taille des vignettes avec padding
             padding = 20  # Espace entre les images
-            text_height = 30  # Espace réservé pour le texte
+            text_height = 40  # Augmenter l'espace pour le texte pour accommoder les emojis
             
-            # Ajuster la hauteur des cellules pour inclure l'espace du texte
-            cell_width = (width - (cols + 1) * padding) // cols
-            cell_height = (height - (rows + 1) * padding) // rows
+            # Calculer les dimensions des cellules
+            available_width = width - (cols + 1) * padding
+            available_height = height - (rows + 1) * padding - rows * text_height
+            
+            if available_width <= 0 or available_height <= 0:
+                # Ajuster les dimensions minimales si nécessaire
+                cell_width = max(100, (width - (cols + 1) * padding) // cols)
+                cell_height = max(100, (height - (rows + 1) * padding - rows * text_height) // rows)
+            else:
+                cell_width = available_width // cols
+                cell_height = available_height // rows
+            
+            # S'assurer que les dimensions sont positives
+            cell_width = max(50, cell_width)
+            cell_height = max(50, cell_height)
             
             # Réduire la hauteur de l'image pour laisser de la place au texte
             thumb_width = cell_width
-            thumb_height = cell_height - text_height
+            thumb_height = cell_height
             
             # Utiliser la couleur de fond sélectionnée
             bg_color = self.background_color.get() if hasattr(self, 'background_color') else '#FFFFFF'
@@ -454,6 +473,7 @@ class ModernApp(TkinterDnD.Tk):
                         
                         # Extraire et ajouter le thème
                         theme = self.extract_theme_from_metadata(img)
+                        print(f"Theme for image {path}: {theme}")  # Debug print
                         if theme:
                             # Position du texte sous l'image
                             text_y = cell_y + thumb_height + 5
@@ -464,9 +484,11 @@ class ModernApp(TkinterDnD.Tk):
                             # Choisir la couleur du texte selon le fond
                             text_color = (0, 0, 0) if bg_color.startswith('#FFF') else (255, 255, 255)
                             
+                            print(f"Drawing theme '{theme}' at position ({text_x}, {text_y})")  # Debug print
                             # Ajouter le texte
                             draw.text((text_x, text_y), theme, 
                                     fill=text_color, font=font)
+                            print(f"Theme text drawn successfully")  # Debug print
                 
                 except Exception as e:
                     print(f"Erreur lors du traitement de {path}: {e}")
@@ -756,31 +778,34 @@ class ModernApp(TkinterDnD.Tk):
     def extract_theme_from_metadata(self, img):
         """Extrait le thème depuis les métadonnées de l'image"""
         try:
-            if hasattr(img, 'info') and 'prompt' in img.info:
-                metadata_str = img.info['prompt']
-                
-                try:
-                    metadata = json.loads(metadata_str)
-                    # Chercher le nœud MegaPromptV2 (202)
-                    if "202" in metadata and "inputs" in metadata["202"]:
-                        theme = metadata["202"]["inputs"].get("theme")
-                        if theme:
-                            # Convertir les codes Unicode en caractères
-                            theme = theme.encode('utf-8').decode('unicode-escape')
-                            # Ne garder que les caractères ASCII alphabétiques, numriques et espaces
-                            theme = ''.join(c for c in theme if (c.isascii() and (c.isalpha() or c.isdigit())) or c.isspace())
-                            # Supprimer les espaces multiples et les espaces au début/fin
-                            theme = ' '.join(theme.split())
-                            return theme
-                except json.JSONDecodeError as e:
-                    print(f"Erreur de parsing JSON: {e}")
-                except Exception as e:
-                    print(f"Erreur lors du traitement du thème: {e}")
-                    
+            # Get metadata from the prompt field
+            metadata = img.info.get('prompt', '{}')
+            print(f"Raw metadata: {metadata}")  # Debug print
+            
+            # Parse the metadata JSON
+            metadata_dict = json.loads(metadata)
+            print(f"Parsed metadata: {metadata_dict}")  # Debug print
+            
+            # Look for theme in MegaPromptV3 node (207)
+            for node_id, node_data in metadata_dict.items():
+                if node_data.get('class_type') == 'MegaPromptV3':
+                    theme = node_data.get('inputs', {}).get('theme', '')
+                    if theme:
+                        # Remove emoji and leading/trailing whitespace
+                        theme = ''.join(c for c in theme if not self.is_emoji(c)).strip()
+                        print(f"Found theme: {theme}")  # Debug print
+                        return theme
+            
+            print("No theme found in metadata")  # Debug print
             return None
+            
         except Exception as e:
-            print(f"Erreur lors de l'extraction du thème: {e}")
+            print(f"Error extracting theme from {img}: {str(e)}")
             return None
+
+    def is_emoji(self, character):
+        """Check if a character is an emoji"""
+        return character in emoji.EMOJI_DATA
     
     def show_loading_message(self, message):
         """Affiche un message de chargement flottant"""
